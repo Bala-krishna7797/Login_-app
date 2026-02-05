@@ -1,0 +1,77 @@
+name: Deploy Login App to ECS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+      # Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Create ECR repo if missing
+      - name: Create ECR repository
+        run: |
+          aws ecr describe-repositories --repository-names login-app-repo || \
+          aws ecr create-repository --repository-name login-app-repo
+
+      # Create ECS cluster if missing
+      - name: Create ECS cluster
+        run: |
+          aws ecs describe-clusters --clusters login-app-cluster || \
+          aws ecs create-cluster --cluster-name login-app-cluster
+
+      # Build, tag, and push Docker image
+      - name: Build, tag, and push image to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: login-app-repo
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      # Register ECS task definition
+      - name: Register ECS task definition
+        run: |
+          aws ecs register-task-definition --cli-input-json file://ecs-task.json
+
+      # Create ECS service if missing
+      - name: Create ECS service
+        run: |
+          aws ecs describe-services --cluster login-app-cluster --services login-app-service || \
+          aws ecs create-service \
+            --cluster login-app-cluster \
+            --service-name login-app-service \
+            --task-definition login-app-task \
+            --desired-count 1 \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.SUBNET_IDS }}],securityGroups=[${{ secrets.SECURITY_GROUP_IDS }}],assignPublicIp=ENABLED}"
+
+      # Update ECS service (deploy new image)
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster login-app-cluster \
+            --service login-app-service \
+            --task-definition login-app-task \
+            --force-new-deployment

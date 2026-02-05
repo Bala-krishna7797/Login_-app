@@ -5,6 +5,7 @@
   "cpu": "256",
   "memory": "512",
   "executionRoleArn": "arn:aws:iam::<account-id>:role/loginAppExecutionRole",
+  "executionRoleArn": "arn:aws:iam::<account-id>:role/loginAppExecutionRole"
   "containerDefinitions": [
     {
       "name": "login-app-container",
